@@ -8,6 +8,14 @@ from plotly.subplots import make_subplots
 import random
 from datetime import datetime
 
+# Initialize session state for caching results
+if 'standard_results' not in st.session_state:
+    st.session_state.standard_results = None
+if 'fast_results' not in st.session_state:
+    st.session_state.fast_results = None
+if 'has_run' not in st.session_state:
+    st.session_state.has_run = False
+
 # Set page configuration
 st.set_page_config(
     page_title="Portfolio Optimization Comparison",
@@ -484,9 +492,9 @@ st.markdown("""
 <div class="highlight" style="text-align:center; padding:30px 20px; background-color:#EFF6FF;">
     <h2 style="margin-top:0; margin-bottom:20px; display:flex; align-items:center; justify-content:center;">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style="margin-right:10px">
-            <path d="M5 3V7M3 5H7M6 17V21M4 19H8M13 3L15.2857 9.85714L21 12L15.2857 14.1429L13 21L10.7143 14.1429L5 12L10.7143 9.85714L13 3Z" stroke="#1E3A8A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M5 3V7M3 5H7M6 17V21M4 19H8M13 3L15.2857 9.85714L21 12L15.2857 14.1429L13 21L10.7143 14.1429L5 12L10.7143 9.85714L13 3Z" stroke="#0000FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        Run Optimization Comparison
+        <span style="color:#0000FF; font-weight:700;">Run Optimization Comparison</span>
     </h2>
     <p style="margin-bottom:25px; max-width:700px; margin-left:auto; margin-right:auto; color:#4B5563;">
         Click below to run both optimization methods and see the performance difference.
@@ -522,17 +530,18 @@ run_button = st.button("Start Comparison", use_container_width=True, help="Click
 st.markdown("</div>", unsafe_allow_html=True)
 
 # Function to simulate standard optimization
+@st.cache_data(ttl=300)  # Cache results for 5 minutes
 def run_standard_optimization(n_assets):
-    # Simulate non-linear scaling computation time
-    # Make it even slower for larger portfolios to highlight the difference
+    # Simulate non-linear scaling computation time but optimize for better UX
+    # Still show the difference in scaling but cap at 8 seconds
     if n_assets >= 800:
-        # For 800+ assets, make it significantly slower
-        expected_time = 0.00015 * (n_assets ** 1.9)  # More aggressive scaling
+        # For 800+ assets, make it moderately slower but not too slow
+        expected_time = 0.00005 * (n_assets ** 1.9)  # Reduced coefficient for better UX
     else:
-        expected_time = 0.0001 * (n_assets ** 1.8)
+        expected_time = 0.00004 * (n_assets ** 1.8)  # Reduced coefficient
 
-    # For demo purposes, cap at 30 seconds and scale down for better UX
-    scaled_time = min(expected_time, 30)  # Allow up to 30 seconds for large portfolios
+    # For demo purposes, cap at 8 seconds for better user experience
+    scaled_time = min(expected_time, 8.0)  # Cap at 8 seconds for better responsiveness
 
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -570,6 +579,7 @@ def run_standard_optimization(n_assets):
     }
 
 # Function to simulate fast optimization
+@st.cache_data(ttl=300)  # Cache results for 5 minutes
 def run_fast_optimization(n_assets):
     # Simulate nearly constant computation time
     progress_bar = st.progress(0)
@@ -578,12 +588,12 @@ def run_fast_optimization(n_assets):
     # Determine speed based on portfolio size - even faster for larger portfolios
     # Our algorithm gets more efficient with scale
     if n_assets <= 500:
-        sleep_time = 0.005  # ~0.5 seconds total
-        theoretical_time = 0.5
+        sleep_time = 0.003  # ~0.3 seconds total - faster for better UX
+        theoretical_time = 0.3
     else:
-        # For 800 assets, we want it to be around 0.6 seconds
-        sleep_time = 0.006  # ~0.6 seconds total
-        theoretical_time = 0.6
+        # For larger portfolios, still very fast
+        sleep_time = 0.004  # ~0.4 seconds total
+        theoretical_time = 0.4
 
     # Simulate computation with progress updates
     start_time = time.time()
@@ -849,25 +859,34 @@ if run_button:
         </div>
     """, unsafe_allow_html=True)
 
-    # Create a bar chart comparing computation times with enhanced styling
-    fig = make_subplots(rows=1, cols=1)
+    # Create a function for the computation time chart with caching
+    @st.cache_data(ttl=300)
+    def create_computation_time_chart(std_time, fast_time):
+        fig = make_subplots(rows=1, cols=1)
 
-    # Add bars for actual computation time
-    fig.add_trace(
-        go.Bar(
-            x=["Standard Optimization", "Fast Optimization"],
-            y=[standard_results["computation_time"], fast_results["computation_time"]],
-            name="Actual Computation Time",
-            marker_color=["#4C72B0", "#55A868"],
-            text=[f"{standard_results['computation_time']:.2f}s", f"{fast_results['computation_time']:.2f}s"],
-            textposition="auto",
-            hoverinfo="y+text",
-            hovertemplate="<b>%{x}</b><br>Time: %{y:.2f}s<extra></extra>"
+        # Add bars for actual computation time
+        fig.add_trace(
+            go.Bar(
+                x=["Standard Optimization", "Fast Optimization"],
+                y=[std_time, fast_time],
+                name="Actual Computation Time",
+                marker_color=["#4C72B0", "#55A868"],
+                text=[f"{std_time:.2f}s", f"{fast_time:.2f}s"],
+                textposition="auto",
+                hoverinfo="y+text",
+                hovertemplate="<b>%{x}</b><br>Time: %{y:.2f}s<extra></extra>"
+            )
         )
-    )
 
-    # Add a horizontal line for speedup annotation
-    speedup = standard_results["computation_time"] / fast_results["computation_time"]
+        # Calculate speedup
+        speedup = std_time / fast_time
+        return fig, speedup
+
+    # Use the cached function
+    fig, speedup = create_computation_time_chart(
+        standard_results["computation_time"],
+        fast_results["computation_time"]
+    )
 
     # Add annotations to highlight the speedup
     fig.add_annotation(
@@ -955,21 +974,31 @@ if run_button:
         </div>
     """, unsafe_allow_html=True)
 
-    # Create data for scaling chart with more data points for smoother curve
-    asset_sizes = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
-    # Use the updated formula for standard times - slower for larger portfolios
-    standard_times = []
-    for n in asset_sizes:
-        if n >= 800:
-            standard_times.append(0.00015 * (n ** 1.9))
-        else:
-            standard_times.append(0.0001 * (n ** 1.8))
+    # Create a function for the scaling projection chart with caching
+    @st.cache_data(ttl=600)  # Cache for 10 minutes
+    def create_scaling_projection_chart():
+        # Create data for scaling chart with more data points for smoother curve
+        asset_sizes = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]
+        # Use the optimized formula for standard times - still showing scaling but faster
+        standard_times = []
+        for n in asset_sizes:
+            if n >= 800:
+                standard_times.append(0.00005 * (n ** 1.9))  # Match the optimized function
+            else:
+                standard_times.append(0.00004 * (n ** 1.8))  # Match the optimized function
 
-    # Fast times are now even faster and slightly variable
-    fast_times = [0.5 if n <= 500 else 0.6 for n in asset_sizes]
+        # Cap at 8 seconds for better visualization
+        standard_times = [min(t, 8.0) for t in standard_times]
 
-    # Create scaling chart with enhanced styling
-    fig2 = go.Figure()
+        # Fast times are now even faster and slightly variable
+        fast_times = [0.3 if n <= 500 else 0.4 for n in asset_sizes]  # Match the optimized function
+
+        # Create scaling chart with enhanced styling
+        fig2 = go.Figure()
+        return fig2, asset_sizes, standard_times, fast_times
+
+    # Use the cached function
+    fig2, asset_sizes, standard_times, fast_times = create_scaling_projection_chart()
 
     # Add area under standard optimization curve
     fig2.add_trace(
@@ -1116,15 +1145,26 @@ if run_button:
         </div>
     """, unsafe_allow_html=True)
 
-    # Create simplified visualization of top holdings
-    top_n = 10  # Show top 10 holdings
-    
-    # Sort weights and get top holdings
-    std_top_indices = np.argsort(standard_results["weights"])[-top_n:][::-1]
-    fast_top_indices = np.argsort(fast_results["weights"])[-top_n:][::-1]
-    
-    std_top_weights = standard_results["weights"][std_top_indices]
-    fast_top_weights = fast_results["weights"][fast_top_indices]
+    # Create a function for the portfolio allocation chart with caching
+    @st.cache_data(ttl=300)  # Cache for 5 minutes
+    def create_portfolio_allocation_chart(std_weights, fast_weights):
+        # Create simplified visualization of top holdings
+        top_n = 10  # Show top 10 holdings
+
+        # Sort weights and get top holdings
+        std_top_indices = np.argsort(std_weights)[-top_n:][::-1]
+        fast_top_indices = np.argsort(fast_weights)[-top_n:][::-1]
+
+        std_top_weights = std_weights[std_top_indices]
+        fast_top_weights = fast_weights[fast_top_indices]
+
+        return top_n, std_top_indices, fast_top_indices, std_top_weights, fast_top_weights
+
+    # Use the cached function
+    top_n, std_top_indices, fast_top_indices, std_top_weights, fast_top_weights = create_portfolio_allocation_chart(
+        standard_results["weights"],
+        fast_results["weights"]
+    )
     
     # Create labels for assets
     std_labels = [f"Asset {i+1}" for i in std_top_indices]
@@ -1346,11 +1386,11 @@ if run_button:
             <div style="font-size:16px; color:#0000FF; font-weight:600; margin-bottom:5px;">At 1,000 assets:</div>
             <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
                 <div style="font-size:16px; font-weight:bold; color:#4C72B0;">Standard:</div>
-                <div style="font-size:16px; font-weight:bold; color:#4C72B0;">{0.00015 * (1000 ** 1.9):.1f} seconds</div>
+                <div style="font-size:16px; font-weight:bold; color:#4C72B0;">{min(0.00005 * (1000 ** 1.9), 8.0):.1f} seconds</div>
             </div>
             <div style="display:flex; justify-content:space-between;">
                 <div style="font-size:16px; font-weight:bold; color:#55A868;">Fast:</div>
-                <div style="font-size:16px; font-weight:bold; color:#55A868;">0.6 seconds</div>
+                <div style="font-size:16px; font-weight:bold; color:#55A868;">0.4 seconds</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
